@@ -1,0 +1,19 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    container_name: coderunner-backend
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./backend/jobs:/app/jobs
+    command: ["python", "app.py"]
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: coderunner-frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
