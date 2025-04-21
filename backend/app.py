@@ -195,7 +195,7 @@ def execute_code_api():
     inputs = data.get('inputs', [])
     secret_key = data.get('key')
     if secret_key != key:
-        return jsonify({'status': 'error', 'message': f"{secret_key} is not valid.Valid: {key}"})
+        return jsonify({'status': 'error', 'message': "Invalid secret key."})
     job_id = str(uuid.uuid4())
     file, job_dir = prepare_file(lang, code, job_id)
     if file is None:
