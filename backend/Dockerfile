@@ -1,26 +1,27 @@
-FROM python:3.13-slim
+FROM alpine:3.20
 
-ENV DEBIAN_FRONTEND=noninteractive
+ENV GOLANG_VERSION=1.24.4
+ENV PATH="/usr/local/go/bin:$PATH"
+
+RUN apk update && apk add --no-cache \
+  build-base \
+  openjdk17 \
+  nodejs \
+  npm \
+  python3 \
+  tar \
+  wget && \
+  wget https://go.dev/dl/go${GOLANG_VERSION}.linux-amd64.tar.gz && \
+  tar -C /usr/local -xzf go${GOLANG_VERSION}.linux-amd64.tar.gz && \
+  rm go${GOLANG_VERSION}.linux-amd64.tar.gz
 
 WORKDIR /app
 
-RUN apt-get update && \
-  apt-get install -y --no-install-recommends \
-  curl \
-  gnupg \
-  gcc \
-  g++ \
-  openjdk-17-jdk && \
-  curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
-  apt-get install -y --no-install-recommends nodejs && \
-  apt-get clean && \
-  rm -rf /var/lib/apt/lists/*
+COPY . .
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY app.py .env ./
+RUN go mod download && \
+  CGO_ENABLED=0 GOOS=linux go build -o server .
 
 EXPOSE 5000
 
-CMD ["python", "app.py"]
+CMD ["./server"]

@@ -8,14 +8,16 @@ import "ace-builds/src-noconflict/mode-c_cpp";
 import "ace-builds/src-noconflict/mode-java";
 import "ace-builds/src-noconflict/mode-javascript";
 import "ace-builds/src-noconflict/mode-python";
+import "ace-builds/src-noconflict/mode-golang";
 import "ace-builds/src-noconflict/ext-searchbox";
 
 const languageOptions = [
-  { value: "python", label: "Python", mode: "python" },
-  { value: "javascript", label: "JavaScript", mode: "javascript" },
-  { value: "java", label: "Java", mode: "java" },
-  { value: "c", label: "C", mode: "c_cpp" },
-  { value: "cpp", label: "C++", mode: "c_cpp" },
+  { value: "python", label: "Python", mode: "python", apiValue: "Python" },
+  { value: "javascript", label: "JavaScript", mode: "javascript", apiValue: "JavaScript" },
+  { value: "java", label: "Java", mode: "java", apiValue: "Java" },
+  { value: "c", label: "C", mode: "c_cpp", apiValue: "C" },
+  { value: "cpp", label: "C++", mode: "c_cpp", apiValue: "C++" },
+  { value: "go", label: "Go", mode: "golang", apiValue: "Go" },
 ];
 
 const lightThemeStyles = `body { background-color: #F9F9F9; }`;
@@ -135,7 +137,7 @@ export default function CodeRunner() {
     axios
       .post(import.meta.env.VITE_API_URL, {
         code: userCode,
-        language: userLang.label,
+        language: userLang.apiValue,
         inputs: userInput,
         key: import.meta.env.VITE_API_KEY,
       })
@@ -148,6 +150,7 @@ export default function CodeRunner() {
       })
       .finally(() => setLoading(false));
   };
+
 
   return (
     <div
