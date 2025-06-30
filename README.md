@@ -4,7 +4,7 @@
 
 ## 🚀 Features
 
-* 🧑‍💻 Code editor with support for multiple languages (Python, C++, C, Java, Javascript)
+* 🧑‍💻 Code editor with support for multiple languages (Python, C++, C, Go, Java, Javascript)
 * 📡 Backend API to compile/run code in a sandboxed environment (written in Go)
 * 🐳 Fully dockerized setup for seamless development & deployment
 * 🎨 Beautiful UI with theme options and responsive design
@@ -34,7 +34,7 @@ This command:
 * Runs them as containers.
 * Connects them through a Docker network.
 
-> By default, the frontend runs on `http://localhost:5173`, and the backend on `http://localhost:5000`.
+> By default, the frontend runs on `http://localhost:3000`, and the backend on `http://localhost:5000`.
 
 ---
 
@@ -42,25 +42,6 @@ This command:
 
 **POST** `http://localhost:5000/`
 
-**Request Body (JSON)**:
-
-```json
-{
-  "language": "python",
-  "code": "print('Hello World')",
-  "input": "optional input string",
-  "key": "your_api_key"
-}
-```
-
-**Response** (always returns HTTP 200):
-
-```json
-{
-  "output": "Hello World\n",
-  "error": ""
-}
-```
 
 > The backend safely runs the submitted code using sandboxed execution in a Go-powered environment and returns the output or any error encountered.
 
