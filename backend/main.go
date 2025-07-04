@@ -3,11 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-contrib/cors"
@@ -20,6 +22,8 @@ const (
 	baseDir        = "jobs"
 	execTimeout    = 10 * time.Second
 	compileTimeout = 10 * time.Second
+	maxCodeSize    = 10000
+	maxInputs      = 20
 )
 
 var (
@@ -58,11 +62,11 @@ type responseError struct {
 }
 
 func main() {
-	_ = godotenv.Load()
-	secretKey = os.Getenv("KEY")
-	if err := os.MkdirAll(baseDir, 0755); err != nil {
-		panic(err)
+	if err := godotenv.Load(); err != nil {
+		log.Println("Warning: .env file not found")
 	}
+	secretKey = os.Getenv("KEY")
+	os.MkdirAll(baseDir, 0755)
 	r := gin.Default()
 	r.Use(cors.Default())
 	r.POST("/", handler)
@@ -70,32 +74,41 @@ func main() {
 		panic(err)
 	}
 }
+
 func handler(c *gin.Context) {
 	var req requestData
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(200, responseError{Status: "error", Message: "Invalid JSON"})
+		c.JSON(400, responseError{Status: "error", Message: "Invalid JSON"})
 		return
 	}
 	if req.Key != secretKey {
-		c.JSON(200, responseError{Status: "error", Message: "Invalid secret key"})
+		c.JSON(403, responseError{Status: "error", Message: "Invalid secret key"})
+		return
+	}
+	if len(req.Code) > maxCodeSize {
+		c.JSON(400, responseError{Status: "error", Message: "Code too large"})
+		return
+	}
+	if len(req.Inputs) > maxInputs {
+		c.JSON(400, responseError{Status: "error", Message: "Too many inputs"})
 		return
 	}
 
 	jobID := uuid.New().String()
 	supported := map[string]bool{"Python": true, "C": true, "C++": true, "Java": true, "JavaScript": true, "Go": true}
 	if !supported[req.Language] {
-		c.JSON(200, responseError{Status: "error", Message: "Unsupported language"})
+		c.JSON(400, responseError{Status: "error", Message: "Unsupported language"})
 		return
 	}
 	if err := validateCode(req.Language, req.Code); err != nil {
-		c.JSON(200, responseError{Status: "error", Message: err.Error()})
+		c.JSON(400, responseError{Status: "error", Message: err.Error()})
 		return
 	}
 
 	jobDir := filepath.Join(baseDir, jobID)
 	defer cleanup(jobDir)
 	if err := os.MkdirAll(jobDir, 0755); err != nil {
-		c.JSON(200, responseError{Status: "error", Message: err.Error()})
+		c.JSON(500, responseError{Status: "error", Message: err.Error()})
 		return
 	}
 
@@ -112,8 +125,9 @@ func handler(c *gin.Context) {
 		compileArgs = []string{"g++", "-Wall", filePath, "-o", filepath.Join(jobDir, "program"+execExt)}
 	case "Java":
 		className := extractJavaClassName(req.Code)
+		className = filepath.Base(className)
 		if className == "" {
-			c.JSON(200, responseError{Status: "error", Message: "No public class found in Java code"})
+			c.JSON(400, responseError{Status: "error", Message: "No public class found in Java code"})
 			return
 		}
 		filePath = filepath.Join(jobDir, className+".java")
@@ -125,16 +139,12 @@ func handler(c *gin.Context) {
 		compileArgs = []string{"go", "build", "-o", filepath.Join(jobDir, "program"+execExt), filePath}
 	}
 
-	// write source
 	if err := os.WriteFile(filePath, []byte(req.Code), 0644); err != nil {
-		c.JSON(200, responseError{Status: "error", Message: err.Error()})
+		c.JSON(500, responseError{Status: "error", Message: err.Error()})
 		return
 	}
 
-	outputs := []string{}
-	compileMsg := ""
-
-	// compile if needed
+	var compileMsg string
 	if len(compileArgs) > 0 {
 		ctx, cancel := context.WithTimeout(context.Background(), compileTimeout)
 		defer cancel()
@@ -145,7 +155,6 @@ func handler(c *gin.Context) {
 		err := cmd.Run()
 		compileMsg = strings.TrimSpace(buf.String())
 		if err != nil {
-			// single compile failure output
 			msg := compileMsg
 			if msg == "" {
 				msg = err.Error()
@@ -157,53 +166,53 @@ func handler(c *gin.Context) {
 		}
 	}
 
-	// execution for each input
-	for _, input := range req.Inputs {
-		ctx, cancel := context.WithTimeout(context.Background(), execTimeout)
-		defer cancel()
+	var (
+		wg      sync.WaitGroup
+		outputs = make([]string, len(req.Inputs))
+	)
 
-		// prepare command
-		var cmd *exec.Cmd
-		switch req.Language {
-		case "Python":
-			cmd = exec.CommandContext(ctx, pythonCmd, filePath)
-		case "C", "C++", "Go":
-			cmd = exec.CommandContext(ctx, filepath.Join(jobDir, "program"+execExt))
-		case "Java":
-			className := strings.TrimSuffix(filepath.Base(filePath), ".java")
-			cmd = exec.CommandContext(ctx, "java", "-cp", jobDir, className)
-		case "JavaScript":
-			cmd = exec.CommandContext(ctx, "node", filePath)
-		}
-		if input != "" {
-			cmd.Stdin = bytes.NewBufferString(input)
-		}
-
-		var out bytes.Buffer
-		cmd.Stdout = &out
-		cmd.Stderr = &out
-		err := cmd.Run()
-
-		// build single result per input
-		result := compileMsg
-		if result != "" {
-			result += "\n"
-		}
-		if ctx.Err() == context.DeadlineExceeded {
-			result += "Error: Code execution timed out"
-		} else if err != nil {
-			if out.Len() > 0 {
-				result += out.String() + "\n" + err.Error()
-			} else {
-				result += err.Error()
+	for i, input := range req.Inputs {
+		wg.Add(1)
+		go func(i int, input string, compileMsg string) {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), execTimeout)
+			defer cancel()
+			var cmd *exec.Cmd
+			switch req.Language {
+			case "Python":
+				cmd = exec.CommandContext(ctx, pythonCmd, filePath)
+			case "C", "C++", "Go":
+				cmd = exec.CommandContext(ctx, filepath.Join(jobDir, "program"+execExt))
+			case "Java":
+				className := strings.TrimSuffix(filepath.Base(filePath), ".java")
+				cmd = exec.CommandContext(ctx, "java", "-cp", jobDir, className)
+			case "JavaScript":
+				cmd = exec.CommandContext(ctx, "node", filePath)
 			}
-		} else {
-			result += out.String()
-		}
-
-		outputs = append(outputs, strings.TrimSpace(result))
+			if input != "" {
+				cmd.Stdin = bytes.NewBufferString(input)
+			}
+			var out bytes.Buffer
+			cmd.Stdout = &out
+			cmd.Stderr = &out
+			err := cmd.Run()
+			var result string
+			if ctx.Err() == context.DeadlineExceeded {
+				result = "Error: Code execution timed out"
+			} else if err != nil {
+				if out.Len() > 0 {
+					result = out.String() + "\n" + err.Error()
+				} else {
+					result = err.Error()
+				}
+			} else {
+				result = out.String()
+			}
+			outputs[i] = strings.TrimSpace(result)
+		}(i, input, compileMsg)
 	}
 
+	wg.Wait()
 	c.JSON(200, responseSuccess{Status: "success", Outputs: outputs})
 }
 
